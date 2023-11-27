@@ -21,6 +21,10 @@ const (
 	postFilename      = "post.bin"
 )
 
+func SavePost(dir string, post *types.Post) error {
+	return savePost(dir, post)
+}
+
 func write(path string, data []byte) error {
 	tmpName := fmt.Sprintf("%s.tmp", path)
 	tmp, err := os.Create(tmpName)

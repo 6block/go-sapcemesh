@@ -70,7 +70,7 @@ jobs:
           rm -f $OUTNAME/post.h
           zip -r $OUTNAME.zip $OUTNAME
       - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v0
+        uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}

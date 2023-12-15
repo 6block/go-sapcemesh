@@ -15,9 +15,7 @@ import (
 
 	"github.com/spacemeshos/go-spacemesh/common/types"
 	"github.com/spacemeshos/go-spacemesh/datastore"
-	"github.com/spacemeshos/go-spacemesh/events"
 	"github.com/spacemeshos/go-spacemesh/log"
-	"github.com/spacemeshos/go-spacemesh/metrics/public"
 	"github.com/spacemeshos/go-spacemesh/sql"
 	"github.com/spacemeshos/go-spacemesh/sql/atxs"
 )
@@ -344,62 +342,68 @@ func (mgr *PostSetupManager) Benchmark(p PostSetupProvider) (int, error) {
 // previously started session, and will return an error if a session is already
 // in progress. It must be ensured that PrepareInitializer is called once
 // before each call to StartSession and that the node is ATX synced.
+// func (mgr *PostSetupManager) StartSession(ctx context.Context) error {
+// 	// Ensure only one goroutine can execute initialization at a time.
+// 	err := func() error {
+// 		mgr.mu.Lock()
+// 		defer mgr.mu.Unlock()
+// 		if mgr.state != PostSetupStatePrepared {
+// 			return fmt.Errorf("post session not prepared")
+// 		}
+// 		mgr.state = PostSetupStateInProgress
+// 		return nil
+// 	}()
+// 	if err != nil {
+// 		return err
+// 	}
+// 	mgr.logger.With().Info("post setup session starting",
+// 		log.String("node_id", mgr.id.String()),
+// 		log.String("commitment_atx", mgr.commitmentAtxId.String()),
+// 		log.String("data_dir", mgr.lastOpts.DataDir),
+// 		log.String("num_units", fmt.Sprintf("%d", mgr.lastOpts.NumUnits)),
+// 		log.String("labels_per_unit", fmt.Sprintf("%d", mgr.cfg.LabelsPerUnit)),
+// 		log.String("provider", fmt.Sprintf("%d", mgr.lastOpts.ProviderID)),
+// 	)
+// 	public.InitStart.Set(float64(mgr.lastOpts.NumUnits))
+// 	events.EmitInitStart(mgr.id, mgr.commitmentAtxId)
+// 	err = mgr.init.Initialize(ctx)
+
+// 	mgr.mu.Lock()
+// 	defer mgr.mu.Unlock()
+// 	var errLabelMismatch initialization.ErrReferenceLabelMismatch
+// 	switch {
+// 	case errors.Is(err, context.Canceled):
+// 		mgr.logger.Info("post setup session was stopped")
+// 		mgr.state = PostSetupStateStopped
+// 		return err
+// 	case errors.As(err, &errLabelMismatch):
+// 		mgr.logger.With().Error("post setup session failed due to an issue with the initialization provider", log.Err(errLabelMismatch))
+// 		mgr.state = PostSetupStateError
+// 		events.EmitInitFailure(mgr.id, mgr.commitmentAtxId, errLabelMismatch)
+// 		return nil
+// 	case err != nil:
+// 		mgr.logger.With().Error("post setup session failed", log.Err(err))
+// 		mgr.state = PostSetupStateError
+// 		events.EmitInitFailure(mgr.id, mgr.commitmentAtxId, err)
+// 		return err
+// 	}
+// 	public.InitEnd.Set(float64(mgr.lastOpts.NumUnits))
+// 	events.EmitInitComplete()
+
+// 	mgr.logger.With().Info("post setup completed",
+// 		log.String("node_id", mgr.id.String()),
+// 		log.String("commitment_atx", mgr.commitmentAtxId.String()),
+// 		log.String("data_dir", mgr.lastOpts.DataDir),
+// 		log.String("num_units", fmt.Sprintf("%d", mgr.lastOpts.NumUnits)),
+// 		log.String("labels_per_unit", fmt.Sprintf("%d", mgr.cfg.LabelsPerUnit)),
+// 		log.String("provider", fmt.Sprintf("%d", mgr.lastOpts.ProviderID)),
+// 	)
+// 	mgr.state = PostSetupStateComplete
+// 	return nil
+// }
+
+// not really run Initilize
 func (mgr *PostSetupManager) StartSession(ctx context.Context) error {
-	// Ensure only one goroutine can execute initialization at a time.
-	err := func() error {
-		mgr.mu.Lock()
-		defer mgr.mu.Unlock()
-		if mgr.state != PostSetupStatePrepared {
-			return fmt.Errorf("post session not prepared")
-		}
-		mgr.state = PostSetupStateInProgress
-		return nil
-	}()
-	if err != nil {
-		return err
-	}
-	mgr.logger.With().Info("post setup session starting",
-		log.String("node_id", mgr.id.String()),
-		log.String("commitment_atx", mgr.commitmentAtxId.String()),
-		log.String("data_dir", mgr.lastOpts.DataDir),
-		log.String("num_units", fmt.Sprintf("%d", mgr.lastOpts.NumUnits)),
-		log.String("labels_per_unit", fmt.Sprintf("%d", mgr.cfg.LabelsPerUnit)),
-		log.String("provider", fmt.Sprintf("%d", mgr.lastOpts.ProviderID)),
-	)
-	public.InitStart.Set(float64(mgr.lastOpts.NumUnits))
-	events.EmitInitStart(mgr.id, mgr.commitmentAtxId)
-	err = mgr.init.Initialize(ctx)
-
-	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
-	var errLabelMismatch initialization.ErrReferenceLabelMismatch
-	switch {
-	case errors.Is(err, context.Canceled):
-		mgr.logger.Info("post setup session was stopped")
-		mgr.state = PostSetupStateStopped
-		return err
-	case errors.As(err, &errLabelMismatch):
-		mgr.logger.With().Error("post setup session failed due to an issue with the initialization provider", log.Err(errLabelMismatch))
-		mgr.state = PostSetupStateError
-		events.EmitInitFailure(mgr.id, mgr.commitmentAtxId, errLabelMismatch)
-		return nil
-	case err != nil:
-		mgr.logger.With().Error("post setup session failed", log.Err(err))
-		mgr.state = PostSetupStateError
-		events.EmitInitFailure(mgr.id, mgr.commitmentAtxId, err)
-		return err
-	}
-	public.InitEnd.Set(float64(mgr.lastOpts.NumUnits))
-	events.EmitInitComplete()
-
-	mgr.logger.With().Info("post setup completed",
-		log.String("node_id", mgr.id.String()),
-		log.String("commitment_atx", mgr.commitmentAtxId.String()),
-		log.String("data_dir", mgr.lastOpts.DataDir),
-		log.String("num_units", fmt.Sprintf("%d", mgr.lastOpts.NumUnits)),
-		log.String("labels_per_unit", fmt.Sprintf("%d", mgr.cfg.LabelsPerUnit)),
-		log.String("provider", fmt.Sprintf("%d", mgr.lastOpts.ProviderID)),
-	)
 	mgr.state = PostSetupStateComplete
 	return nil
 }

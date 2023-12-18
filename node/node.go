@@ -1152,7 +1152,7 @@ func (app *App) startServices(ctx context.Context) error {
 		for nodeId, atxBuilder := range app.atxBuilders {
 			opts := app.Config.SMESHING.Opts
 			opts.DataDir = app.edSgnSets[nodeId].path
-			if err := atxBuilder.StartSmeshing(coinbaseAddr, app.Config.SMESHING.Opts); err != nil {
+			if err := atxBuilder.StartSmeshing(coinbaseAddr, opts); err != nil {
 				app.log.Panic("failed to start smeshing: %v", err)
 			}
 		}

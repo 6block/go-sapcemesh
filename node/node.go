@@ -1134,9 +1134,11 @@ func (app *App) startServices(ctx context.Context) error {
 		return fmt.Errorf("cannot start hare: %w", err)
 	}
 	for nodeId, builder := range app.proposalBuilders {
+		id := nodeId
+		p := builder
 		app.eg.Go(func() error {
-			app.log.Info("ProposalBuilder Running for node: %s", nodeId)
-			return builder.Run(ctx)
+			app.log.Info("ProposalBuilder Running for node: %s", id)
+			return p.Run(ctx)
 		})
 	}
 

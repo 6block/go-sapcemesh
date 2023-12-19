@@ -844,6 +844,7 @@ func (app *App) initServices(ctx context.Context) error {
 	}
 	proposalBuilders := make(map[types.NodeID]*miner.ProposalBuilder)
 	for nodeId, v := range app.edSgnSets {
+		lg := app.log.Named(v.edSgn.NodeID().ShortString()).WithFields(v.edSgn.NodeID())
 		proposalBuilder := miner.New(
 			app.clock,
 			v.edSgn,
@@ -883,6 +884,7 @@ func (app *App) initServices(ctx context.Context) error {
 
 	atxBuilders := make(map[types.NodeID]*activation.Builder)
 	for nodeId, v := range app.edSgnSets {
+		lg := app.log.Named(v.edSgn.NodeID().ShortString()).WithFields(v.edSgn.NodeID())
 		postSetupMgr, err := activation.NewPostSetupManager(
 			nodeId,
 			app.Config.POST,

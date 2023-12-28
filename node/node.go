@@ -166,6 +166,11 @@ func GetCommand() *cobra.Command {
 					return fmt.Errorf("could not retrieve identity: %w", err)
 				}
 
+				/* Load miner's identity */
+				if app.edSgnSets, err = app.LoadEdSigners(app.Config.SMESHING.Opts.DataDir); err != nil {
+					return fmt.Errorf("could not retrieve miner identitys: %w", err)
+				}
+
 				app.preserve, err = app.LoadCheckpoint(ctx)
 				if err != nil {
 					return err
@@ -319,6 +324,7 @@ type App struct {
 	*cobra.Command
 	fileLock           *flock.Flock
 	edSgn              *signing.EdSigner
+	edSgnSets          WrapEdSignerSets
 	Config             *config.Config
 	db                 *sql.Database
 	dbMetrics          *dbmetrics.DBMetricsCollector
@@ -329,7 +335,7 @@ type App struct {
 	profilerService    *pyroscope.Profiler
 	syncer             *syncer.Syncer
 	proposalListener   *proposals.Handler
-	proposalBuilder    *miner.ProposalBuilder
+	proposalBuilders   map[types.NodeID]*miner.ProposalBuilder
 	mesh               *mesh.Mesh
 	cachedDB           *datastore.CachedDB
 	clock              *timesync.NodeClock
@@ -338,8 +344,7 @@ type App struct {
 	hOracle            *eligibility.Oracle
 	blockGen           *blocks.Generator
 	certifier          *blocks.Certifier
-	postSetupMgr       *activation.PostSetupManager
-	atxBuilder         *activation.Builder
+	atxBuilders        map[types.NodeID]*activation.Builder
 	atxHandler         *activation.Handler
 	txHandler          *txs.TxHandler
 	validator          *activation.Validator
@@ -842,48 +847,27 @@ func (app *App) initServices(ctx context.Context) error {
 	if app.Config.MinerGoodAtxsPercent > 0 {
 		minerGoodAtxPct = app.Config.MinerGoodAtxsPercent
 	}
-	proposalBuilder := miner.New(
-		app.clock,
-		app.edSgn,
-		app.cachedDB,
-		app.host,
-		trtl,
-		newSyncer,
-		app.conState,
-		miner.WithLayerSize(layerSize),
-		miner.WithLayerPerEpoch(layersPerEpoch),
-		miner.WithMinimalActiveSetWeight(app.Config.Tortoise.MinimalActiveSetWeight),
-		miner.WithHdist(app.Config.Tortoise.Hdist),
-		miner.WithNetworkDelay(app.Config.ATXGradeDelay),
-		miner.WithMinGoodAtxPercent(minerGoodAtxPct),
-		miner.WithLogger(app.addLogger(ProposalBuilderLogger, lg)),
-	)
 
-	postSetupMgr, err := activation.NewPostSetupManager(
-		app.edSgn.NodeID(),
-		app.Config.POST,
-		app.addLogger(PostLogger, lg),
-		app.cachedDB, goldenATXID,
-		app.Config.SMESHING.ProvingOpts,
-	)
-	if err != nil {
-		app.log.Panic("failed to create post setup manager: %v", err)
-	}
-
-	nipostBuilder, err := activation.NewNIPostBuilder(
-		app.edSgn.NodeID(),
-		postSetupMgr,
-		poetDb,
-		app.Config.PoETServers,
-		app.Config.SMESHING.Opts.DataDir,
-		app.addLogger(NipostBuilderLogger, lg),
-		app.edSgn,
-		app.Config.POET,
-		app.clock,
-		activation.WithNipostValidator(app.validator),
-	)
-	if err != nil {
-		app.log.Panic("failed to create nipost builder: %v", err)
+	proposalBuilders := make(map[types.NodeID]*miner.ProposalBuilder)
+	for nodeId, v := range app.edSgnSets {
+		lg := app.log.Named(v.edSgn.NodeID().ShortString()).WithFields(v.edSgn.NodeID())
+		proposalBuilder := miner.New(
+			app.clock,
+			v.edSgn,
+			app.cachedDB,
+			app.host,
+			trtl,
+			newSyncer,
+			app.conState,
+			miner.WithLayerSize(layerSize),
+			miner.WithLayerPerEpoch(layersPerEpoch),
+			miner.WithMinimalActiveSetWeight(app.Config.Tortoise.MinimalActiveSetWeight),
+			miner.WithHdist(app.Config.Tortoise.Hdist),
+			miner.WithNetworkDelay(app.Config.ATXGradeDelay),
+			miner.WithMinGoodAtxPercent(minerGoodAtxPct),
+			miner.WithLogger(app.addLogger(ProposalBuilderLogger, lg)),
+		)
+		proposalBuilders[nodeId] = proposalBuilder
 	}
 
 	var coinbaseAddr types.Address
@@ -903,22 +887,55 @@ func (app *App) initServices(ctx context.Context) error {
 		LayersPerEpoch:   layersPerEpoch,
 		RegossipInterval: app.Config.RegossipAtxInterval,
 	}
-	atxBuilder := activation.NewBuilder(
-		builderConfig,
-		app.edSgn.NodeID(),
-		app.edSgn,
-		app.cachedDB,
-		app.host,
-		nipostBuilder,
-		postSetupMgr,
-		app.clock,
-		newSyncer,
-		app.addLogger("atxBuilder", lg),
-		activation.WithContext(ctx),
-		activation.WithPoetConfig(app.Config.POET),
-		activation.WithPoetRetryInterval(app.Config.HARE.WakeupDelta),
-		activation.WithValidator(app.validator),
-	)
+
+	atxBuilders := make(map[types.NodeID]*activation.Builder)
+	for nodeId, v := range app.edSgnSets {
+		lg := app.log.Named(v.edSgn.NodeID().ShortString()).WithFields(v.edSgn.NodeID())
+		postSetupMgr, err := activation.NewPostSetupManager(
+			nodeId,
+			app.Config.POST,
+			app.addLogger(PostLogger, lg),
+			app.cachedDB, goldenATXID,
+			app.Config.SMESHING.ProvingOpts,
+		)
+		if err != nil {
+			app.log.Panic("failed to create post setup manager: %v", err)
+		}
+
+		nipostBuilder, err := activation.NewNIPostBuilder(
+			nodeId,
+			postSetupMgr,
+			poetDb,
+			app.Config.PoETServers,
+			v.path,
+			app.addLogger(NipostBuilderLogger, lg),
+			v.edSgn,
+			app.Config.POET,
+			app.clock,
+			activation.WithNipostValidator(app.validator),
+		)
+		if err != nil {
+			app.log.Panic("failed to create nipost builder: %v", err)
+		}
+
+		atxBuilder := activation.NewBuilder(
+			builderConfig,
+			nodeId,
+			v.edSgn,
+			app.cachedDB,
+			app.host,
+			nipostBuilder,
+			postSetupMgr,
+			app.clock,
+			newSyncer,
+			app.addLogger("atxBuilder", lg),
+			activation.WithContext(ctx),
+			activation.WithPoetConfig(app.Config.POET),
+			activation.WithPoetRetryInterval(app.Config.HARE.WakeupDelta),
+			activation.WithValidator(app.validator),
+		)
+		atxBuilders[nodeId] = atxBuilder
+	}
 
 	malfeasanceHandler := malfeasance.NewHandler(
 		app.cachedDB,
@@ -1006,13 +1023,12 @@ func (app *App) initServices(ctx context.Context) error {
 		pubsub.ChainGossipHandler(atxSyncHandler, malfeasanceHandler.HandleMalfeasanceProof),
 	)
 
-	app.proposalBuilder = proposalBuilder
+	app.proposalBuilders = proposalBuilders
 	app.proposalListener = proposalListener
 	app.mesh = msh
 	app.syncer = newSyncer
 	app.svm = state
-	app.atxBuilder = atxBuilder
-	app.postSetupMgr = postSetupMgr
+	app.atxBuilders = atxBuilders
 	app.atxHandler = atxHandler
 	app.poetDb = poetDb
 	app.fetcher = fetcher
@@ -1121,7 +1137,9 @@ func (app *App) listenToUpdates(ctx context.Context) {
 					activesets.Add(app.db, id, activeSet)
 
 					app.hOracle.UpdateActiveSet(epoch, set)
-					app.proposalBuilder.UpdateActiveSet(epoch, set)
+					for _, pBuilder := range app.proposalBuilders {
+						pBuilder.UpdateActiveSet(epoch, set)
+					}
 
 					app.eg.Go(func() error {
 						if err := atxsync.Download(
@@ -1154,9 +1172,14 @@ func (app *App) startServices(ctx context.Context) error {
 	if err := app.hare.Start(ctx); err != nil {
 		return fmt.Errorf("cannot start hare: %w", err)
 	}
-	app.eg.Go(func() error {
-		return app.proposalBuilder.Run(ctx)
-	})
+	for nodeId, builder := range app.proposalBuilders {
+		id := nodeId
+		p := builder
+		app.eg.Go(func() error {
+			app.log.Info("ProposalBuilder Running for node: %s", id)
+			return p.Run(ctx)
+		})
+	}
 
 	if app.Config.SMESHING.Start {
 		coinbaseAddr, err := types.StringToAddress(app.Config.SMESHING.CoinbaseAccount)
@@ -1167,8 +1190,12 @@ func (app *App) startServices(ctx context.Context) error {
 				err,
 			)
 		}
-		if err := app.atxBuilder.StartSmeshing(coinbaseAddr, app.Config.SMESHING.Opts); err != nil {
-			app.log.Panic("failed to start smeshing: %v", err)
+		for nodeId, atxBuilder := range app.atxBuilders {
+			opts := app.Config.SMESHING.Opts
+			opts.DataDir = app.edSgnSets[nodeId].path
+			if err := atxBuilder.StartSmeshing(coinbaseAddr, opts); err != nil {
+				app.log.Panic("failed to start smeshing: %v", err)
+			}
 		}
 	} else {
 		app.log.Info("smeshing not started, waiting to be triggered via smesher api")
@@ -1206,13 +1233,13 @@ func (app *App) initService(ctx context.Context, svc grpcserver.Service) (grpcse
 		return grpcserver.NewNodeService(app.host, app.mesh, app.clock, app.syncer, cmd.Version, cmd.Commit), nil
 	case grpcserver.Admin:
 		return grpcserver.NewAdminService(app.db, app.Config.DataDir(), app.host), nil
-	case grpcserver.Smesher:
-		return grpcserver.NewSmesherService(
-			app.postSetupMgr,
-			app.atxBuilder,
-			app.Config.API.SmesherStreamInterval,
-			app.Config.SMESHING.Opts,
-		), nil
+	// case grpcserver.Smesher:
+	// 	return grpcserver.NewSmesherService(
+	// 		app.postSetupMgr,
+	// 		app.atxBuilder,
+	// 		app.Config.API.SmesherStreamInterval,
+	// 		app.Config.SMESHING.Opts,
+	// 	), nil
 	case grpcserver.Transaction:
 		return grpcserver.NewTransactionService(
 			app.db,
@@ -1351,8 +1378,8 @@ func (app *App) stopServices(ctx context.Context) {
 		app.beaconProtocol.Close()
 	}
 
-	if app.atxBuilder != nil {
-		_ = app.atxBuilder.StopSmeshing(false)
+	for _, atxBuilder := range app.atxBuilders {
+		_ = atxBuilder.StopSmeshing(false)
 	}
 
 	if app.postVerifier != nil {
